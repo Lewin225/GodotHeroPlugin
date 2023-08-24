@@ -2,6 +2,11 @@
 Godot .chart file loader
 
 
+To Install
+* Create a folder called addons in the project root
+* Copy the "GodotHero Chart Reader" folder into it
+* Enable the plugin in project settings
+
 https://github.com/Lewin225/GodotHeroPlugin/assets/13208949/bd73317a-9dda-47bf-b866-57311cf6c73a
 
 
