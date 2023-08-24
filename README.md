@@ -1,6 +1,10 @@
 # GodotHeroPlugin 0.1
 Godot .chart file loader
 
+
+https://github.com/Lewin225/GodotHeroPlugin/assets/13208949/bd73317a-9dda-47bf-b866-57311cf6c73a
+
+
 This godot addon can load .chart files and convert them into resources, you can even save them for later use
 
 * Chart file must be in the standard folder layout, eg .chart file, with the music and images in the same folder
