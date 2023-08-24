@@ -44,6 +44,10 @@ This godot addon can load .chart files and convert them into resources, you can 
 
 # Demo Scene
 
+![B7aDMgYpQL](https://github.com/Lewin225/GodotHeroPlugin/assets/13208949/17e758a8-6205-40bc-bf1d-57629ea7f2f8)
+
+
+
 Included is an example scene showing loading, playing, drawing and testing hits against a chart. 
 
 Limitations! 
@@ -58,7 +62,9 @@ Open the scene, and run it with F6, drag and drop a chart file into the window t
 
 # Tools
 
-A modified audiostream player (ChartSongPlayer) is included that provides a basic time to tick implementation for playing back a chart, with a few utiility functions for testing a hit, fetching events at a tick, and dealing with tempo changes. plus a few signals you can connect to. Uses a very simple chache implementation for feting any events at a given tick (Massive array), but it is constant time
+A modified audiostream player (ChartSongPlayer) is included that provides a (get_playback_position() -> ticks conversion) implementation for playing back a chart, with a few utiility functions for testing a hit, fetching events at a tick, and dealing with tempo changes. plus a few signals you can connect to. Uses a very simple chache implementation for fetching any events at a given tick (Massive array), but it is constant time. Will allways read the first difficulty/subchart
+
+If you are experieenced with the auto server manually mixing the audio by tick is probbaly a better way to go?
 
 
 During loading ChartSong also computes a few utility properties for each event in the chart, eg. tempo changes now have the next temp change as a property, add more postprocessing in ChartSong.after_loaded()
