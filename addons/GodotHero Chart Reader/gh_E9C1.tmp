@@ -1,0 +1,896 @@
+[gd_scene load_steps=29 format=3 uid="uid://b0wuebepiyqt4"]
+
+[ext_resource type="Script" path="res://addons/GodotHero Chart Reader/Classes/ChartSongPlayer.gd" id="1_xhatb"]
+[ext_resource type="PackedScene" uid="uid://c618yjiw1m0q5" path="res://addons/GodotHero Chart Reader/Tipbits/BlockyProgress.tscn" id="3_1w6le"]
+[ext_resource type="Texture2D" uid="uid://don5srb3xjwd5" path="res://addons/GodotHero Chart Reader/background_texture_design_layer_2.jpg" id="3_okqx5"]
+[ext_resource type="Script" path="res://addons/GodotHero Chart Reader/gh_test_scene_frets.gd" id="5_siamu"]
+[ext_resource type="Script" path="res://addons/GodotHero Chart Reader/gh_test_scene_chart_render.gd" id="6_7qk5u"]
+
+[sub_resource type="GDScript" id="GDScript_vtu2m"]
+script/source = "extends Node
+@onready var lrc_scroll:ScrollContainer = %lyrics
+@onready var hitmarker = $Display/hit
+@onready var score = %score
+@onready var sub_track_selector = %sub_track_selector
+
+@onready var accuracy_grid_up = $\"Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator/grid/grid_up\"
+@onready var accuracy_grid_down = $\"Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator/grid/grid_down\"
+
+func _ready()->void:
+	get_window().files_dropped.connect(files_dropped)
+
+func files_dropped(files_paths:PackedStringArray):
+	%\"Drop file to load hint\".visible = bool(0)
+	var path = files_paths[0]
+	if path.get_extension() == 'chart':
+		var chart:ChartSong = ChartReader.load_chart(path)
+		chart.full_load()
+		sub_track_selector.clear()
+		for subchat in chart.get_sub_chart_list():
+			sub_track_selector.add_item(subchat)
+		$ChartSongPlayer.stop()
+		$ChartSongPlayer.chart = chart
+		$ChartSongPlayer.play(0)
+		%lyrics_all.text = chart.get_lyrics()
+		%lyrics_highlight.text = \"\"
+		%name.text = chart.name
+		%artist.text = chart.artist
+		%resolution.text = str(chart.resolution)
+		%album.text = chart.album
+		
+		%\"Chart Renderer\".render_chart(chart, 0)
+		
+func lyric_emmited(lyric:ChartTrackEventText):
+	%lyrics_highlight.text += lyric.as_plain_text()
+	if lyric.is_last_syllable:
+		%lyrics_highlight.text += \" \"
+	if lyric.phrase_end or lyric.phrase_start:
+		%lyrics_highlight.text += \"\\n\"
+
+var game_mode_enabled = true
+var points_total:int = 0
+var points_flow = 0
+var note_hit_combo:int = 0
+var multiplier:int = 1
+var hit_offset_lerp:float = 0
+
+var accuracy_grid_height = 0
+
+func _physics_process(delta: float) -> void:
+	if points_flow < points_total:
+		points_flow = lerp(float(points_flow), float(points_total), delta*2.0)
+	score.text = str(int(points_flow))
+	
+	%multiplier_modulo.value = fmod(float(note_hit_combo), 10.0)
+	%x2.text = str(multiplier)
+
+	
+func do_strum(frets:Array, tick:int, hitwindow:int):
+	var score = 0
+	var max_score = 0
+	var accuracy:float = 0 # 0 is perfect
+	var miss = 0
+	var hits = 0
+	for fret in frets:
+		var distance:float = $ChartSongPlayer.test_hit(fret, tick, hitwindow)
+		print(distance)
+		if distance > hitwindow:
+			miss += 1
+		else:
+			hits += 1
+			score += hitwindow - distance
+			max_score += hitwindow
+			accuracy += distance
+			
+	if miss == 0:
+		note_hit_combo += hits
+		hit_offset_lerp = accuracy / float(hits)
+		%strum_indicator.modulate = Color.LIGHT_GREEN
+	else:
+		note_hit_combo = 0
+		%strum_indicator.modulate = Color.LIGHT_CORAL
+		
+	points_total += score * multiplier
+		
+var smoothed_accuracy = 0.0
+var hitwindow_tick_size = 50
+
+func _process(delta: float) -> void:
+	%combo_display.visible = game_mode_enabled
+	%score.visible = game_mode_enabled
+	
+	%strum_indicator.modulate.a = lerp(%strum_indicator.modulate.a, 0.0, delta*5.0)
+	if !mouse_over_lyrics:
+		lrc_scroll.scroll_vertical = lerp(float(lrc_scroll.scroll_vertical), %lyrics_highlight.size.y, delta)
+	smoothed_accuracy = lerp(smoothed_accuracy, -hit_offset_lerp, delta*5)
+	#%hit_offset.position.y = smoothed_accuracy * ((accuracy_grid_height / 2) / hitwindow_tick_size )
+	
+	var scaled_accuracy = smoothed_accuracy * ((accuracy_grid_height / 2) / hitwindow_tick_size )
+	
+	%BlockyRange.value = smoothed_accuracy
+	
+	
+	if $ChartSongPlayer.playing:
+		
+		multiplier = 1 + (note_hit_combo / 10)
+		
+		var tick = $ChartSongPlayer.get_current_tick()
+		# Renders fine without lerp, but not at 165hz
+		%\"Chart Renderer\".position.y = -tick*2.0
+		tick = tick - $ChartSongPlayer.tps - (delta * $ChartSongPlayer.chart.resolution)
+		
+		%tps.text = str($ChartSongPlayer.tps)
+		
+		var points = 0
+		var max_points = 0
+		var miss = false
+		var keys_held = 0
+		
+		if %autoplay.button_pressed:
+			var input = []
+			for note in autoplay_note_queue:
+				input.append(note.fret)
+				
+			if len(input) > 0:
+				do_strum(input, tick, hitwindow_tick_size)
+				autoplay_note_queue.clear()
+		
+		if Input.is_action_just_pressed(\"strum_up\") or Input.is_action_just_pressed(\"strum_down\"):
+			
+			var input = []
+
+			if Input.is_action_pressed(\"fret_1\"): input.append(1)
+			if Input.is_action_pressed(\"fret_2\"): input.append(2)	
+			if Input.is_action_pressed(\"fret_3\"): input.append(3)	
+			if Input.is_action_pressed(\"fret_4\"): input.append(4)	
+			if Input.is_action_pressed(\"fret_5\"): input.append(5)	
+			do_strum(input, tick, hitwindow_tick_size)
+
+
+				
+			
+
+func _on_chart_song_player_lyric_event(event) -> void:
+	lyric_emmited(event)
+
+
+## Detect mouse entering/leaving lyrics area to stop autoscrolling
+var mouse_over_lyrics = false
+func _on_lyrics_mouse_entered() -> void:
+	mouse_over_lyrics = true
+
+func _on_lyrics_mouse_exited() -> void:
+	mouse_over_lyrics = false
+	
+
+
+func _on_option_button_item_selected(index: int) -> void:
+	%\"Chart Renderer\".render_chart($ChartSongPlayer.chart, index)
+
+var autoplay_note_queue = []
+func _on_chart_song_player_note_event(event:ChartTrackEventNote) -> void:
+	autoplay_note_queue.append(event)
+"
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_e3xqq"]
+bg_color = Color(1, 1, 1, 0.0431373)
+corner_radius_top_left = 50
+corner_radius_top_right = 50
+corner_radius_bottom_right = 50
+corner_radius_bottom_left = 50
+
+[sub_resource type="SystemFont" id="SystemFont_34qvr"]
+font_names = PackedStringArray("Sans-Serif")
+generate_mipmaps = true
+hinting = 2
+multichannel_signed_distance_field = true
+
+[sub_resource type="LabelSettings" id="LabelSettings_hbhkx"]
+font = SubResource("SystemFont_34qvr")
+font_size = 12
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_wmu8y"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_0peml"]
+bg_color = Color(0.0784314, 0.0784314, 0.0784314, 0)
+border_width_left = 2
+border_width_top = 15
+border_width_right = 3
+border_width_bottom = 15
+border_color = Color(0, 0, 0, 0.698039)
+border_blend = true
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+corner_detail = 6
+
+[sub_resource type="ViewportTexture" id="ViewportTexture_q0jy6"]
+viewport_path = NodePath("Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frame/rendering")
+
+[sub_resource type="Gradient" id="Gradient_ml684"]
+offsets = PackedFloat32Array(0.982178, 1)
+colors = PackedColorArray(1, 1, 1, 0, 1, 1, 1, 0.32549)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_hg3xc"]
+gradient = SubResource("Gradient_ml684")
+width = 5
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_w51ob"]
+bg_color = Color(1, 1, 1, 0.721569)
+skew = Vector2(0.665, 0)
+corner_radius_bottom_left = 1024
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_elex5"]
+bg_color = Color(0.6, 0.6, 0.6, 0)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_j76g1"]
+bg_color = Color(1, 1, 1, 0.294118)
+border_width_top = 2
+border_color = Color(1, 1, 1, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_0kfyl"]
+font_size = 36
+
+[sub_resource type="LabelSettings" id="LabelSettings_iuy52"]
+font_size = 10
+font_color = Color(1, 1, 1, 0.317647)
+
+[sub_resource type="SystemFont" id="SystemFont_s7568"]
+font_names = PackedStringArray("Sans-Serif")
+
+[sub_resource type="LabelSettings" id="LabelSettings_0xsdn"]
+font = SubResource("SystemFont_s7568")
+font_size = 26
+
+[sub_resource type="SystemFont" id="SystemFont_l1mwc"]
+font_names = PackedStringArray("Sans-Serif")
+hinting = 2
+
+[sub_resource type="LabelSettings" id="LabelSettings_ag5p3"]
+font = SubResource("SystemFont_l1mwc")
+font_size = 31
+
+[sub_resource type="LabelSettings" id="LabelSettings_lf37t"]
+font = SubResource("SystemFont_l1mwc")
+font_size = 31
+outline_size = 2
+
+[sub_resource type="GDScript" id="GDScript_mq3jb"]
+script/source = "extends Control
+
+
+
+var spektrum:AudioEffectSpectrumAnalyzerInstance
+
+func _ready() -> void:
+	spektrum = AudioServer.get_bus_effect_instance(0,0)
+
+func _process(delta: float) -> void:
+	if spektrum:
+		%\"0-50\".value = spektrum.get_magnitude_for_frequency_range(0,50).length()
+		%\"50-250\".value = spektrum.get_magnitude_for_frequency_range(50,250).length()
+		%\"250-1000\".value = spektrum.get_magnitude_for_frequency_range(250,1000).length()
+		%\"1000-5000\".value = spektrum.get_magnitude_for_frequency_range(1000,5000).length()
+		%\"5000-10000\".value = spektrum.get_magnitude_for_frequency_range(5000,10000).length()
+		%\"10000-20000\".value = spektrum.get_magnitude_for_frequency_range(10000,20000).length()
+		
+		
+		
+		
+		
+"
+
+[sub_resource type="Gradient" id="Gradient_au7ji"]
+interpolation_mode = 1
+offsets = PackedFloat32Array(0, 0.120536, 0.354911)
+colors = PackedColorArray(1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1)
+
+[sub_resource type="SystemFont" id="SystemFont_nuuj7"]
+font_names = PackedStringArray("Sans-Serif")
+
+[sub_resource type="LabelSettings" id="LabelSettings_ib5mb"]
+font = SubResource("SystemFont_nuuj7")
+font_size = 20
+
+[node name="GH_Test_Runner_Scene" type="Node"]
+script = SubResource("GDScript_vtu2m")
+
+[node name="miss" type="AudioStreamPlayer" parent="."]
+
+[node name="hit" type="AudioStreamPlayer" parent="."]
+volume_db = 9.367
+
+[node name="ChartSongPlayer" type="AudioStreamPlayer" parent="."]
+script = ExtResource("1_xhatb")
+
+[node name="Display" type="MarginContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 0
+theme_override_constants/margin_top = 0
+theme_override_constants/margin_right = 0
+theme_override_constants/margin_bottom = 0
+
+[node name="background" type="TextureRect" parent="Display"]
+self_modulate = Color(0.0823529, 0.0823529, 0.0823529, 1)
+texture_filter = 1
+layout_mode = 2
+texture = ExtResource("3_okqx5")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="_" type="HSplitContainer" parent="Display"]
+layout_mode = 2
+split_offset = 425
+
+[node name="_margin_meta" type="MarginContainer" parent="Display/_"]
+custom_minimum_size = Vector2(370, 0)
+layout_mode = 2
+theme_override_constants/margin_left = 15
+theme_override_constants/margin_top = 15
+theme_override_constants/margin_right = 15
+theme_override_constants/margin_bottom = 15
+
+[node name="metadata" type="Panel" parent="Display/_/_margin_meta"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_e3xqq")
+
+[node name="MarginContainer" type="MarginContainer" parent="Display/_/_margin_meta/metadata"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 15
+theme_override_constants/margin_top = 15
+theme_override_constants/margin_right = 15
+theme_override_constants/margin_bottom = 15
+
+[node name="_" type="VBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="information" type="MarginContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_"]
+layout_mode = 2
+theme_override_constants/margin_left = 50
+theme_override_constants/margin_right = 65
+
+[node name="_" type="VBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information"]
+layout_mode = 2
+
+[node name="value" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_"]
+layout_mode = 2
+
+[node name="key" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value"]
+layout_mode = 2
+text = "Name : "
+label_settings = SubResource("LabelSettings_hbhkx")
+
+[node name="name" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 11
+label_settings = SubResource("LabelSettings_hbhkx")
+horizontal_alignment = 2
+text_overrun_behavior = 3
+
+[node name="value2" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_"]
+layout_mode = 2
+
+[node name="key" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value2"]
+layout_mode = 2
+text = "Artist : "
+label_settings = SubResource("LabelSettings_hbhkx")
+
+[node name="artist" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value2"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 11
+label_settings = SubResource("LabelSettings_hbhkx")
+horizontal_alignment = 2
+text_overrun_behavior = 3
+
+[node name="value3" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_"]
+layout_mode = 2
+
+[node name="key" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value3"]
+layout_mode = 2
+text = "Album : "
+label_settings = SubResource("LabelSettings_hbhkx")
+
+[node name="album" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value3"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 11
+label_settings = SubResource("LabelSettings_hbhkx")
+horizontal_alignment = 2
+text_overrun_behavior = 3
+
+[node name="value4" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_"]
+layout_mode = 2
+
+[node name="key" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value4"]
+layout_mode = 2
+text = "Resolution : "
+label_settings = SubResource("LabelSettings_hbhkx")
+
+[node name="resolution" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/value4"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 11
+label_settings = SubResource("LabelSettings_hbhkx")
+horizontal_alignment = 2
+text_overrun_behavior = 3
+
+[node name="sub_track_selector" type="OptionButton" parent="Display/_/_margin_meta/metadata/MarginContainer/_/information/_"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="accuracy and notes" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="hit_offset_indicator" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes"]
+clip_children = 1
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.1
+theme_override_styles/panel = SubResource("StyleBoxFlat_wmu8y")
+
+[node name="ColorRect" type="ColorRect" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 1)
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Label2" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator/VBoxContainer"]
+layout_mode = 2
+text = "- 10"
+label_settings = SubResource("LabelSettings_hbhkx")
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="BlockyRange" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator/VBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+min_value = -10.0
+max_value = 10.0
+idle_modulate = Color(0.0941176, 0.0941176, 0.0941176, 1)
+fill_color = true
+spacing = 5
+
+[node name="Label" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator/VBoxContainer"]
+layout_mode = 2
+text = "+ 10"
+label_settings = SubResource("LabelSettings_hbhkx")
+horizontal_alignment = 1
+
+[node name="overlay" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/hit_offset_indicator"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_0peml")
+
+[node name="chart" type="VBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 1
+
+[node name="frame" type="TextureRect" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart"]
+texture_filter = 1
+layout_mode = 2
+size_flags_vertical = 3
+texture = SubResource("ViewportTexture_q0jy6")
+expand_mode = 1
+flip_v = true
+
+[node name="rendering" type="SubViewport" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frame"]
+disable_3d = true
+transparent_bg = true
+handle_input_locally = false
+size = Vector2i(40, 1500)
+size_2d_override = Vector2i(40, 1000)
+
+[node name="Chart Renderer" type="TextureRect" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frame/rendering"]
+unique_name_in_owner = true
+texture_filter = 1
+custom_minimum_size = Vector2(0, 8)
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -20.605
+offset_bottom = 9778.39
+grow_horizontal = 2
+grow_vertical = 2
+texture = SubResource("GradientTexture1D_hg3xc")
+expand_mode = 1
+stretch_mode = 1
+script = ExtResource("6_7qk5u")
+colors = [Color(0, 1, 0, 1), Color(1, 0, 0, 1), Color(1, 1, 0, 1), Color(0, 0, 1, 1), Color(1, 0.54902, 0, 1), Color(1, 1, 1, 0.545098), Color(1, 1, 1, 0.572549), Color(1, 1, 1, 0.592157)]
+
+[node name="ColorRect" type="ColorRect" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frame/rendering/Chart Renderer"]
+layout_mode = 0
+offset_top = 1.0
+offset_right = 5.0
+offset_bottom = 6.0
+color = Color(1, 0, 1, 1)
+
+[node name="strum_indicator" type="ColorRect" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frame"]
+unique_name_in_owner = true
+z_index = 1
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_bottom = 2.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="frets" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart"]
+custom_minimum_size = Vector2(0, 12.725)
+layout_mode = 2
+size_flags_vertical = 8
+alignment = 1
+script = ExtResource("5_siamu")
+
+[node name="0" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+self_modulate = Color(0, 1, 0, 1)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="1" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+modulate = Color(1, 0, 0, 1)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="2" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+modulate = Color(1, 1, 0, 1)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="3" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+modulate = Color(0, 0, 1, 1)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="4" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+modulate = Color(1, 0.478431, 0, 1)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="6" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="7" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="8" type="Panel" parent="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_w51ob")
+
+[node name="combo_display" type="HBoxContainer" parent="Display/_/_margin_meta/metadata/MarginContainer/_"]
+unique_name_in_owner = true
+clip_children = 2
+custom_minimum_size = Vector2(0, 21.625)
+layout_mode = 2
+alignment = 1
+
+[node name="x" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "X"
+horizontal_alignment = 2
+vertical_alignment = 2
+
+[node name="multiplier_modulo" type="ProgressBar" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display/x"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -29.0
+offset_top = -15.0
+offset_right = -15.0
+offset_bottom = 15.0
+grow_horizontal = 0
+grow_vertical = 2
+theme_override_styles/background = SubResource("StyleBoxFlat_elex5")
+theme_override_styles/fill = SubResource("StyleBoxFlat_j76g1")
+max_value = 10.0
+value = 8.0
+fill_mode = 3
+show_percentage = false
+
+[node name="x2" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "2"
+label_settings = SubResource("LabelSettings_0kfyl")
+
+[node name="Label2" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display/x2"]
+z_as_relative = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -81.0
+offset_top = 5.0
+offset_right = -14.0
+offset_bottom = 6.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "combo / multiplier"
+label_settings = SubResource("LabelSettings_iuy52")
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="score" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(87.99, 49.235)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "0000"
+label_settings = SubResource("LabelSettings_0xsdn")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Label2" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display/score"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 7.0
+offset_bottom = 7.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "score"
+label_settings = SubResource("LabelSettings_iuy52")
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="tps" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(87.99, 49.235)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "2"
+label_settings = SubResource("LabelSettings_0xsdn")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Label" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display/tps"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 7.0
+offset_bottom = 7.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "ticks per frame"
+label_settings = SubResource("LabelSettings_iuy52")
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="autoplay" type="CheckBox" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(45.26, 0)
+layout_mode = 2
+button_pressed = true
+alignment = 1
+icon_alignment = 1
+
+[node name="Label2" type="Label" parent="Display/_/_margin_meta/metadata/MarginContainer/_/combo_display/autoplay"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -30.5
+offset_top = 13.5
+offset_right = 12.5
+offset_bottom = 30.5
+grow_horizontal = 2
+grow_vertical = 2
+text = "auto"
+label_settings = SubResource("LabelSettings_iuy52")
+horizontal_alignment = 1
+vertical_alignment = 2
+
+[node name="_margin_lyrics" type="MarginContainer" parent="Display/_"]
+layout_mode = 2
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_bottom = 20
+
+[node name="_" type="VBoxContainer" parent="Display/_/_margin_lyrics"]
+layout_mode = 2
+theme_override_constants/separation = 25
+
+[node name="lyrics" type="ScrollContainer" parent="Display/_/_margin_lyrics/_"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+scroll_vertical_custom_step = 0.001
+horizontal_scroll_mode = 0
+
+[node name="lyrics_all" type="Label" parent="Display/_/_margin_lyrics/_/lyrics"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+label_settings = SubResource("LabelSettings_ag5p3")
+autowrap_mode = 2
+
+[node name="lyrics_highlight" type="Label" parent="Display/_/_margin_lyrics/_/lyrics/lyrics_all"]
+unique_name_in_owner = true
+self_modulate = Color(1, 0.576471, 0.239216, 1)
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 36.0
+grow_horizontal = 2
+label_settings = SubResource("LabelSettings_lf37t")
+autowrap_mode = 2
+
+[node name="VU" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = SubResource("GDScript_mq3jb")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VU"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="0-50" parent="VU/HBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 0.0
+idle_modulate = Color(0.184314, 0.184314, 0.184314, 1)
+fill_color = true
+spacing = 15
+gradient = SubResource("Gradient_au7ji")
+
+[node name="50-250" parent="VU/HBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 0.0
+idle_modulate = Color(0.184314, 0.184314, 0.184314, 1)
+fill_color = true
+spacing = 15
+gradient = SubResource("Gradient_au7ji")
+
+[node name="250-1000" parent="VU/HBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 0.0
+idle_modulate = Color(0.184314, 0.184314, 0.184314, 1)
+fill_color = true
+spacing = 15
+gradient = SubResource("Gradient_au7ji")
+
+[node name="1000-5000" parent="VU/HBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 0.0
+idle_modulate = Color(0.184314, 0.184314, 0.184314, 1)
+fill_color = true
+spacing = 15
+gradient = SubResource("Gradient_au7ji")
+
+[node name="5000-10000" parent="VU/HBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 0.0
+idle_modulate = Color(0.184314, 0.184314, 0.184314, 1)
+fill_color = true
+spacing = 15
+gradient = SubResource("Gradient_au7ji")
+
+[node name="10000-20000" parent="VU/HBoxContainer" instance=ExtResource("3_1w6le")]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 0.0
+idle_modulate = Color(0.184314, 0.184314, 0.184314, 1)
+fill_color = true
+spacing = 15
+gradient = SubResource("Gradient_au7ji")
+
+[node name="Drop file to load hint" type="ColorRect" parent="."]
+unique_name_in_owner = true
+visible = false
+z_index = 999
+z_as_relative = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.819608)
+
+[node name="Label" type="Label" parent="Drop file to load hint"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "Drag and drop a .chart file to load it
+
+
+(Only charts using mp3 audio will load, ogg loading comes in godot 4.2)"
+label_settings = SubResource("LabelSettings_ib5mb")
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[connection signal="lyric_event" from="ChartSongPlayer" to="." method="_on_chart_song_player_lyric_event"]
+[connection signal="note_event" from="ChartSongPlayer" to="." method="_on_chart_song_player_note_event"]
+[connection signal="note_event" from="ChartSongPlayer" to="Display/_/_margin_meta/metadata/MarginContainer/_/accuracy and notes/chart/frets" method="_on_chart_song_player_note_event"]
+[connection signal="item_selected" from="Display/_/_margin_meta/metadata/MarginContainer/_/information/_/sub_track_selector" to="." method="_on_option_button_item_selected"]
+[connection signal="mouse_entered" from="Display/_/_margin_lyrics/_/lyrics" to="." method="_on_lyrics_mouse_entered"]
+[connection signal="mouse_exited" from="Display/_/_margin_lyrics/_/lyrics" to="." method="_on_lyrics_mouse_exited"]
