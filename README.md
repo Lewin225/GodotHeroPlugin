@@ -7,6 +7,11 @@ To Install
 * Copy the "GodotHero Chart Reader" folder into it
 * Enable the plugin in project settings
 
+
+Big thanks to
+https://github.com/TheNathannator/GuitarGame_ChartFormats/tree/main
+
+
 https://github.com/Lewin225/GodotHeroPlugin/assets/13208949/bd73317a-9dda-47bf-b866-57311cf6c73a
 
 
