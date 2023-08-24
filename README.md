@@ -1,5 +1,5 @@
 # GodotHeroPlugin 0.1
-Godot .chart file loader
+Godot 4.1+ .chart file loader
 
 
 To Install
